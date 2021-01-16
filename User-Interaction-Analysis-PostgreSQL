@@ -1,0 +1,344 @@
+-- User Interaction SQL Analysis Conducted by Feng Yang
+
+drop table if exists f_visits;
+create table f_visits("user_id" int, "page_id" int, "timestamp" timestamptz);
+set timezone = 'UTC';
+insert into f_visits("user_id","page_id", "timestamp") 
+values 
+(14, 5, '2020-12-01 6:33:50'),
+(13, 2, '2020-12-02 0:56:14'),
+(3,  5, '2020-12-02 10:28:07'),
+(7,  5, '2020-12-02 3:29:07'),
+(15, 4,	'2020-12-03 18:52:56'),
+(4,  4,	'2020-12-03 23:47:43'),
+(9,	 1,	'2020-12-04 23:29:08'),
+(6,	 2,	'2020-12-04 3:47:10'),
+(11, 3,	'2020-12-05 23:50:51'),
+(11, 1,	'2020-12-05 6:57:44'),
+(5,	 4, '2020-12-06 10:04:17'),
+(15, 3,	'2020-12-06 1:28:34'),
+(7,	 4,	'2020-12-08 7:12:01'),
+(19, 1,	'2020-12-09 2:31:20'),
+(16, 3,	'2020-12-10 3:16:21'),
+(10, 1, '2020-12-11 21:58:45'),
+(15, 4, '2020-12-11 7:13:16'),
+(2,	 5,	'2020-12-15 3:36:46'),
+(2, 3,	'2020-12-16 18:11:58'),
+(12, 3,	'2020-12-16 18:11:58'),
+(13, 3,	'2020-12-16 18:43:37'),
+(18, 3,	'2020-12-16 22:15:26'),
+(4,	 1,	'2020-12-17 10:40:22'),
+(14, 3,	'2020-12-17 18:31:14'),
+(13, 4,	'2020-12-17 3:30:56'),
+(17, 4,	'2020-12-18 0:29:26'),
+(12, 3,	'2020-12-18 4:22:32'),
+(3,	 1,	'2020-12-19 14:42:37'),
+(8,	 3,	'2020-12-20 0:31:20'),
+(1,	 4,	'2020-12-20 12:57:34'),
+(11, 1,	'2020-12-20 8:15:08'),
+(1, 3,	'2020-12-21 15:36:28'),
+(1, 5,	'2020-12-21 13:36:28'),
+(17, 1,	'2020-12-21 1:23:28'),
+(17, 3,	'2020-12-21 5:23:28'),
+(3, 1,	'2020-12-21 2:23:28'),
+(3, 3,	'2020-12-21 1:23:28'),
+(14, 4,	'2020-12-21 23:18:06'),
+(11, 3,	'2020-12-21 9:09:59'),
+(16, 1,	'2020-12-22 0:56:37'),
+(8,	 2,	'2020-12-22 22:09:02'),
+(2,	 3, '2020-12-22 23:47:40'),
+(19, 1, '2020-12-22 4:52:14'),
+(2,	 5, '2020-12-22 7:06:30'),
+(13, 1, '2020-12-23 4:05:23'),
+(19, 1, '2020-12-23 6:00:57'),
+(18, 3, '2020-12-25 0:58:40'),
+(7,	 3, '2020-12-25 17:51:01'),
+(15, 5, '2020-12-25 8:32:44'),
+(14, 3, '2020-12-26 13:07:11'),
+(18, 1, '2020-12-26 15:15:46'),
+(12, 1, '2020-12-26 20:37:25'),
+(9,	 5,	'2020-12-26 8:44:56'),
+(2,	 4, '2020-12-26 9:49:02'),
+(2,	 3, '2020-12-27 13:02:02'),
+(2,	 5, '2020-12-28 10:52:02'),
+(12, 1, '2020-12-29 1:32:24');
+
+-----------------------------------------------------------------------------------------------------------------------------------------------
+--1.Report the page with largest and smallest number of user visits
+--Method1: use max(), min()
+with cte as
+(select page_id, count(distinct user_id) as num_user
+from f_visits
+group by page_id)
+
+select page_id, num_user
+from cte
+where num_user = (select max(num_user) from cte)
+union
+select page_id, num_user
+from cte
+where num_user = (select min(num_user) from cte)
+order by num_user;
+
+--Method 2: use rank
+select page_id, num_user
+from
+(select *, 
+rank() over(order by num_user desc) as r1, 
+rank() over(order by num_user) as r2
+from (
+    select page_id, count(distinct user_id) as num_user
+    from f_visits
+    group by page_id) foo1
+) foo2
+where r1 = 1 or r2 = 1
+order by num_user;
+
+---------------------------------------------------------------------------------------------------------------------------------------------
+--2: For each page, report the first time and the last time it was visited
+
+select page_id, timestamp
+from
+    (select page_id, timestamp, 
+    row_number() over(partition by page_id order by timestamp) as r1,
+    row_number() over(partition by page_id order by timestamp desc) as r2
+    from f_visits) foo1
+where r1 = 1 or r2 = 1
+order by page_id, timestamp;
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--3: For each user_id, find the difference between the last time visiting a page and the second last time visiting a page. 
+--If the user has just one visit, keep that user_id and have NULL as time difference between the two visits. 
+
+--Method 1: user row_numer() to find last_visit and second_last_visit
+with cte as
+(select user_id, timestamp as last_visit
+from
+    (select user_id, timestamp, row_number() over(partition by user_id order by timestamp desc) as r1
+    from f_visits) foo1
+where r1 = 1)
+
+select cte.user_id, cte.last_visit, foo3.second_last_visit, 
+    case when foo3.second_last_visit is not null then cte.last_visit - foo3.second_last_visit else null end as diff
+from cte left join
+    (select user_id, timestamp as second_last_visit
+    from
+        (select v.user_id, v.timestamp, row_number() over(partition by v.user_id order by v.timestamp desc) as r2
+        from f_visits v join cte on v.user_id = cte.user_id
+        where v.timestamp < cte.last_visit) foo2
+    where r2 = 1) foo3 
+on cte.user_id = foo3.user_id
+order by diff desc;
+
+--Method 2: user max() to find last_visit and second_last_visit
+with cte as
+(select user_id, max(timestamp) as last_visit
+ from f_visits
+ group by user_id)
+ 
+select cte.user_id, cte.last_visit, foo4.second_last_visit,
+    case when foo4.second_last_visit is not null then cte.last_visit - foo4.second_last_visit else null end as diff
+from cte left join
+    (select v.user_id, max(v.timestamp) as second_last_visit
+    from f_visits v join cte on v.user_id = cte.user_id
+    where v.timestamp < cte.last_visit
+    group by v.user_id) foo4
+on cte.user_id = foo4.user_id
+order by diff desc;
+
+
+--Method 3: user row_number() to find last_vist, and user lead() to find second_last visit
+select user_id, timestamp, second_last_visit,
+    case when second_last_visit is not null then timestamp - second_last_visit else null end as diff
+from
+    (select user_id, timestamp,  row_number() over(partition by user_id order by timestamp desc) as r,
+    lead(timestamp, 1) over(partition by user_id order by timestamp desc) as second_last_visit
+    from f_visits) foo5
+where r = 1
+order by diff desc;
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--4: Find the average number of distinct visited pages per users for a period of 7 days ending 2020-12-25 inclusively.
+select round(avg(num_pages), 2) as avg_num_pages_per_users
+from
+    (select user_id, count(distinct page_id) as num_pages
+    from f_visits
+    where '2020-12-25 23:59:59' - timestamp between '0 days' and '7 days'
+    group by user_id) foo;
+    
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--5: For every date for a period of 7 days ending 2020-12-25 inclusively, 
+-- report the number of users that visited a page for the first time on that day.
+
+
+--Method 1: use min() to find first_vist
+with cte as 
+(select user_id, min(timestamp) as first_visit
+ from f_visits
+ group by user_id)
+ 
+select date(v.timestamp) as day, count(distinct v.user_id) as num_new_users
+from f_visits v join cte on v.user_id = cte.user_id and v.timestamp = cte.first_visit
+where '2020-12-25 23:59:59' - timestamp between '0 days' and '7 days'
+group by date(v.timestamp);
+
+--Method 2 : user row_number() to find first time
+select date(foo.timestamp), count(distinct foo.user_id) as num_new_users
+from f_visits v
+join
+    (select user_id, timestamp, row_number() over(partition by user_id order by timestamp) as r1
+    from f_visits) foo on foo.user_id = v.user_id and foo.timestamp = v.timestamp
+where foo.r1 = 1 and '2020-12-25 23:59:59' - foo.timestamp between '0 days' and '7 days'
+group by date(foo.timestamp);
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--6. Define frequent users as users who visited at least 3 pages. 
+--Write a query that returns for each user on which day they became a frequent user. 
+--That is, for each user, on which day they visited the 3rd pages. 
+
+select user_id, timestamp
+from
+    (select user_id, timestamp,
+    row_number() over(partition by user_id order by timestamp) as r1
+    from f_visits) foo
+where r1 = 3;
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--7: Define active users as a user that has visited more than one page with number of visits to that page greater than 
+--the average number of visits to that page among all users. Find active user. 
+
+with cte as
+(select page_id, (num_visits * 1.0)/num_users as avg_num_visits
+from
+    (select page_id, count(*) as num_visits, count(distinct user_id) as num_users
+    from f_visits
+    group by page_id) foo)
+
+
+select user_id
+from
+    (select v.user_id, v.page_id,
+    count(v.*) over(partition by v.user_id, v.page_id) as user_num_visits, cte.avg_num_visits
+    from f_visits v
+    join cte on v.page_id = cte.page_id) foo2
+where user_num_visits > avg_num_visits
+group by user_id
+having count(*) > 1;
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--8. Define active users are those who visited a page for 3 or more consecutive days. Find active users.
+
+--Method 1: use lead()
+with cte as
+(select *, 
+lead(dates, 1) over(partition by user_id order by dates) as n1,
+lead(dates, 2) over(partition by user_id order by dates) as n2
+from
+    (select user_id, date(timestamp) as dates
+    from f_visits) foo)
+
+select user_id
+from cte
+where dates + 1 = n1
+and dates + 2 = n2;
+
+--Method 2: user self join
+with cte as
+(select user_id, date(timestamp) as dates
+ from f_visits) 
+
+select c1.user_id
+from cte c1 
+join cte c2 on c1.user_id = c2.user_id and c1.dates + 1 = c2.dates
+join cte c3 on c1.user_id = c3.user_id and c1.dates + 2 = c3.dates;
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--9.Define a user was active on some day if he/she visited at least two pages on that day. 
+--Find daily active user count for a period of 7 days ending 2020-12-25 
+
+select dates, count(user_id) as num_daily_active_users
+from
+    (select date(timestamp) as dates, user_id
+    from f_visits
+    where '2020-12-25 23:59:59' - timestamp between '0 days' and '7 days'
+    group by dates, user_id
+    having count(*) >= 2) foo
+group by dates;
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--10.Query the percentage of users that logged in again on the day after the day they first visited a page, rounded to 2 decimal places. 
+--In other words, count the number of users that visited a page for at least two consecutive days starting from their first date 
+--of visiting a page, then divide that number by the total number of users who visited a page at least once.
+
+--Method 1: dense_rank() and lead()
+select round(foo2.num_active_users * 1.0/foo3.num_users, 2) as percentage_active_users
+from
+(select count(distinct user_id) as num_active_users
+from
+    (select user_id, date(timestamp) as date1, dense_rank() over(partition by user_id order by date(timestamp)) as r1,
+    lead(date(timestamp), 1) over(partition by user_id order by date(timestamp)) as l1
+    from f_visits) foo
+where r1 = 1 and date1 + 1 = l1) foo2, 
+(select count(distinct user_id) as num_users from f_visits) foo3;
+
+
+--Method 2: self join
+with cte as
+(select user_id, min(date(timestamp)) as first_visit
+from f_visits
+group by user_id)
+
+select round(foo1.num_active_users * 1.0/foo2.num_users, 2) as percentage_active_users
+from
+    (select count(distinct v.user_id) as num_active_users
+    from f_visits v join cte 
+    on v.user_id = cte.user_id and date(v.timestamp) = cte.first_visit + 1) foo1, 
+    (select count(distinct user_id) as num_users
+    from f_visits) foo2;
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+--11.Define the acquisition date of a user to be the first date of visiting a page for that user. 
+--Define 1 day retention of some date X to be the number of users whose acquisition date is X 
+--and they visited a page on the day right after X, divided by the number of users whose acquisition date is X, rounded to 2 decimal places. 
+--Write an SQL query that reports for each acquisition date, the number of users that visited a page on that day and the day 1 retention.
+
+--Method 1: dense_rank(), lead()
+with cte as
+(select *
+from
+    (select user_id, date(timestamp) as acquisition_date, 
+    dense_rank() over(partition by user_id order by date(timestamp)) as r1,
+    lead(date(timestamp), 1) over(partition by user_id order by date(timestamp)) as l1
+    from f_visits) foo
+where r1 = 1)
+
+select acquisition_date, 
+sum(case when acquisition_date + 1 = l1 then 1 else 0 end) * 1.0/count(distinct user_id) as day1_rentention_rate
+from cte
+group by acquisition_date;
+
+--Method 2: self join
+with cte as 
+(select user_id, min(date(timestamp)) as acquisition_date
+ from f_visits
+ group by user_id)
+ 
+select foo1.acquisition_date, 
+case when foo2.num_of_rentention is null then 0 else round(foo2.num_of_rentention * 1.0/foo1.num_of_users, 2) end as day1_rentention_rate
+from
+    (select acquisition_date, count(distinct user_id) as num_of_users
+    from cte
+    group by acquisition_date) foo1
+left join
+    (select cte.acquisition_date, count(distinct v.user_id) as num_of_rentention
+    from cte
+    join f_visits v on cte.acquisition_date + 1 = date(v.timestamp) and cte.user_id = v.user_id
+    group by cte.acquisition_date) foo2 on foo1.acquisition_date = foo2.acquisition_date
+
+
+
